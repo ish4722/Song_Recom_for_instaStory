@@ -11,7 +11,7 @@ from flask import Flask, jsonify, render_template, request
 from PIL import Image
 import google.generativeai as genai
 
-from config import FLASK_SECRET_KEY, TOP_K
+from config import FLASK_SECRET_KEY, TOP_K, GEMINI_API_KEY
 from description import embed_text, process_image
 from retrieval.faiss_index import load_faiss_index, search
 from retrieval.ranker import explain, rerank
@@ -20,6 +20,7 @@ from services.model_manager import get_clip
 from suno_automation import automate_login
 from suno_session_manager import generate_song_on_suno
 
+genai.configure(api_key=GEMINI_API_KEY)
 app = Flask(__name__)
 app.config["SECRET_KEY"] = FLASK_SECRET_KEY
 
@@ -35,11 +36,9 @@ else:
 
 text_index = load_faiss_index("song_text_faiss.index")
 clip_index = load_faiss_index("song_clip_faiss.index")
-
 artist_language = {"Sachin-Jigar":"Hindi","The Weeknd":"English","Udit Narayan":"Hindi","Atif Aslam":"Hindi","Taylor Swift":"English","Karan Aujla":"Punjabi","Drake":"English","Tanishk Bagchi":"Hindi","Diljit Dosanjh":"Punjabi","Masoom Sharma":"Haryanvi","Bruno Mars":"English","Vishal Mishra":"Hindi","G. V. Prakash":"Tamil","SZA":"English","Sidhu Moose Wala":"Punjabi","Billie Eilish":"English","Rahat Fateh Ali Khan":"Hindi","Lady Gaga":"English","Darshan Raval":"Hindi","Sachet Tandon":"Hindi","Manoj Muntashir":"Hindi","Pawan Singh":"Bhojpuri","Gur Sidhu":"Punjabi","Jimin":"English","Arjan Dhillon":"Punjabi","AP Dhillon":"Punjabi","Javed Ali":"Hindi","Justin Bieber":"English","Lana Del Rey":"English","Thaman S":"Telugu","Cheema Y":"Punjabi","Jaani":"Hindi","Ariana Grande":"English"}
 
-jobs = {}
-jobs_lock = threading.Lock()
+jobs, jobs_lock = {}, threading.Lock()
 executor = ThreadPoolExecutor(max_workers=2)
 
 
@@ -57,10 +56,10 @@ def candidate_results(description, image_embedding, filtered_data, top_k=50):
     allowed = {id(song): song for song in filtered_data}
     if not allowed:
         return []
-    indices = {id(song): i for i, song in enumerate(song_data)}
+    positions = {id(song): i for i, song in enumerate(song_data)}
     candidates = {}
-
     text_query = embed_text(description)
+
     if text_index is not None:
         ids, scores = search(text_index, text_query, min(top_k, len(song_data)))
         for idx, score in zip(ids, scores):
@@ -78,13 +77,13 @@ def candidate_results(description, image_embedding, filtered_data, top_k=50):
         for song in filtered_data:
             embedding = np.asarray(song.get("embedding"), dtype="float32")
             score = float(np.dot(text_query, embedding) / (np.linalg.norm(embedding) + 1e-12))
-            candidates[indices.get(id(song), len(candidates))] = {"song": song, "semantic_score": score, "image_score": 0.0}
+            candidates[positions.get(id(song), len(candidates))] = {"song": song, "semantic_score": score, "image_score": 0.0}
     return list(candidates.values())
 
 
 @app.route("/")
 def index():
-    return render_template("index.html")
+    return render_template("index_v2.html")
 
 
 @app.route("/upload_photo", methods=["POST"])
@@ -93,19 +92,16 @@ def upload_photo():
         return jsonify({"error": "Please upload an image."}), 400
     file = request.files["photo"]
     if not (file.mimetype or "").startswith("image/"):
-        return jsonify({"error": "Only image files are supported by the recommendation pipeline."}), 400
+        return jsonify({"error": "Only image files are supported."}), 400
 
     manual_description = request.form.get("manual_description", "").strip()
     selected_languages = request.form.getlist("languages")
     selected_artists = request.form.getlist("artists")
     mood = request.form.get("mood", "").strip()
     user_id = request.form.get("user_id", "anonymous")[:100]
-
     refined_description = process_image(file, manual_description)
     file.stream.seek(0)
-    image_embedding = None
-    if clip_index is not None:
-        image_embedding = clip_image_embedding(file)
+    image_embedding = clip_image_embedding(file) if clip_index is not None else None
 
     filtered_data = song_data
     if selected_languages:
@@ -119,15 +115,13 @@ def upload_photo():
     for item in ranked:
         song = item["song"]
         recommendations.append({"artist": song.get("artist", "Unknown"), "track": song.get("track", "Unknown"), "description": song.get("description", "No description available."), "similarity": round(float(item["score"]), 4), "semantic_score": round(float(item.get("semantic_score", 0)), 4), "image_score": round(float(item.get("image_score", 0)), 4), "mood_score": round(float(item.get("mood_score", 0)), 4), "explanation": explain(song, item)})
-
     return jsonify({"refined_description": refined_description, "recommendations": recommendations})
 
 
 @app.route("/feedback", methods=["POST"])
 def feedback():
     data = request.get_json(silent=True) or {}
-    required = ["user_id", "artist", "track", "feedback"]
-    if any(not data.get(key) for key in required):
+    if any(not data.get(k) for k in ["user_id", "artist", "track", "feedback"]):
         return jsonify({"error": "user_id, artist, track and feedback are required."}), 400
     try:
         record_feedback(data["user_id"][:100], data["artist"], data["track"], data["feedback"])
@@ -176,13 +170,11 @@ def generate_song():
     return jsonify({"job_id": job_id, "status": "queued"}), 202
 
 
-@app.route("/song_status/<job_id>", methods=["GET"])
+@app.route("/song_status/<job_id>")
 def song_status(job_id):
     with jobs_lock:
         job = jobs.get(job_id)
-    if not job:
-        return jsonify({"error": "Job not found"}), 404
-    return jsonify(job)
+    return jsonify(job) if job else (jsonify({"error": "Job not found"}), 404)
 
 
 @app.route("/get_song_moods")
