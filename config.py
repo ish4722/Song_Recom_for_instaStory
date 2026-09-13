@@ -13,6 +13,3 @@ PREFERENCE_WEIGHT = float(os.getenv("PREFERENCE_WEIGHT", "0.10"))
 FAISS_INDEX_PATH = os.getenv("FAISS_INDEX_PATH", "song_data_faiss.index")
 MULTIMODAL_DATA_PATH = os.getenv("MULTIMODAL_DATA_PATH", "song_data_multimodal.pkl")
 FEEDBACK_PATH = os.getenv("FEEDBACK_PATH", "data/feedback.json")
-
-if not GEMINI_API_KEY:
-    raise RuntimeError("GEMINI_API_KEY is not configured. Copy .env.example to .env and add your key.")
