@@ -20,7 +20,9 @@ from services.model_manager import get_clip
 from suno_automation import automate_login
 from suno_session_manager import generate_song_on_suno
 
-genai.configure(api_key=GEMINI_API_KEY)
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
+
 app = Flask(__name__)
 app.config["SECRET_KEY"] = FLASK_SECRET_KEY
 
@@ -37,7 +39,6 @@ else:
 text_index = load_faiss_index("song_text_faiss.index")
 clip_index = load_faiss_index("song_clip_faiss.index")
 artist_language = {"Sachin-Jigar":"Hindi","The Weeknd":"English","Udit Narayan":"Hindi","Atif Aslam":"Hindi","Taylor Swift":"English","Karan Aujla":"Punjabi","Drake":"English","Tanishk Bagchi":"Hindi","Diljit Dosanjh":"Punjabi","Masoom Sharma":"Haryanvi","Bruno Mars":"English","Vishal Mishra":"Hindi","G. V. Prakash":"Tamil","SZA":"English","Sidhu Moose Wala":"Punjabi","Billie Eilish":"English","Rahat Fateh Ali Khan":"Hindi","Lady Gaga":"English","Darshan Raval":"Hindi","Sachet Tandon":"Hindi","Manoj Muntashir":"Hindi","Pawan Singh":"Bhojpuri","Gur Sidhu":"Punjabi","Jimin":"English","Arjan Dhillon":"Punjabi","AP Dhillon":"Punjabi","Javed Ali":"Hindi","Justin Bieber":"English","Lana Del Rey":"English","Thaman S":"Telugu","Cheema Y":"Punjabi","Jaani":"Hindi","Ariana Grande":"English"}
-
 jobs, jobs_lock = {}, threading.Lock()
 executor = ThreadPoolExecutor(max_workers=2)
 
@@ -59,20 +60,17 @@ def candidate_results(description, image_embedding, filtered_data, top_k=50):
     positions = {id(song): i for i, song in enumerate(song_data)}
     candidates = {}
     text_query = embed_text(description)
-
     if text_index is not None:
         ids, scores = search(text_index, text_query, min(top_k, len(song_data)))
         for idx, score in zip(ids, scores):
             if 0 <= idx < len(song_data) and id(song_data[idx]) in allowed:
                 candidates[idx] = {"song": song_data[idx], "semantic_score": float(score), "image_score": 0.0}
-
     if clip_index is not None and image_embedding is not None:
         ids, scores = search(clip_index, image_embedding, min(top_k, len(song_data)))
         for idx, score in zip(ids, scores):
             if 0 <= idx < len(song_data) and id(song_data[idx]) in allowed:
                 item = candidates.setdefault(idx, {"song": song_data[idx], "semantic_score": 0.0, "image_score": 0.0})
                 item["image_score"] = float(score)
-
     if not candidates:
         for song in filtered_data:
             embedding = np.asarray(song.get("embedding"), dtype="float32")
@@ -93,7 +91,6 @@ def upload_photo():
     file = request.files["photo"]
     if not (file.mimetype or "").startswith("image/"):
         return jsonify({"error": "Only image files are supported."}), 400
-
     manual_description = request.form.get("manual_description", "").strip()
     selected_languages = request.form.getlist("languages")
     selected_artists = request.form.getlist("artists")
@@ -102,13 +99,11 @@ def upload_photo():
     refined_description = process_image(file, manual_description)
     file.stream.seek(0)
     image_embedding = clip_image_embedding(file) if clip_index is not None else None
-
     filtered_data = song_data
     if selected_languages:
         filtered_data = [s for s in filtered_data if artist_language.get(s.get("artist"), "Other") in selected_languages]
     if selected_artists:
         filtered_data = [s for s in filtered_data if s.get("artist") in selected_artists]
-
     candidates = candidate_results(refined_description, image_embedding, filtered_data)
     ranked = rerank(candidates, refined_description, mood=mood, preferences=artist_preferences(user_id))[:TOP_K]
     recommendations = []
@@ -131,6 +126,8 @@ def feedback():
 
 
 def generate_lyrics_with_gemini(image_description, mood, genre="pop", language="English"):
+    if not GEMINI_API_KEY:
+        return None
     try:
         model = genai.GenerativeModel(model_name="gemini-1.5-flash")
         prompt = f"Write a short family-friendly {mood} {genre} song in {language} based on this image description: {image_description}. Keep it under 250 characters and format as [Verse 1] then [Chorus]."
@@ -145,7 +142,7 @@ def song_generation_worker(job_id, description, mood, genre, language):
     try:
         lyrics = generate_lyrics_with_gemini(description, mood, genre, language)
         if not lyrics:
-            raise RuntimeError("Failed to generate lyrics")
+            raise RuntimeError("Gemini API key is missing or lyrics generation failed")
         session_file = "suno_session.json"
         if not os.path.exists(session_file) or os.path.getsize(session_file) < 100:
             asyncio.run(automate_login())
