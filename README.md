@@ -75,40 +75,9 @@ Each recommendation exposes individual ranking signals such as:
 
 The project now separates **offline indexing** from **online recommendation**, making the expensive embedding and indexing work reusable at inference time.
 
-```text
-                              OFFLINE PIPELINE
-┌─────────────────────────────────────────────────────────────────────────┐
-│ Song Metadata → Descriptions → Sentence Transformer Embeddings        │
-│                              └──────→ CLIP Text Embeddings              │
-│                                         ↓                               │
-│                              FAISS Vector Indexes                       │
-└─────────────────────────────────────────────────────────────────────────┘
-                                      │
-                                      │ precomputed
-                                      ▼
-                              ONLINE PIPELINE
-┌─────────────────────────────────────────────────────────────────────────┐
-│ Uploaded Image                                                         │
-│      │                                                                  │
-│      ├────────→ BLIP → Gemini → Text Embedding ───────┐                │
-│      │                                                  │                │
-│      └────────→ CLIP Image Embedding ──────────────────┤                │
-│                                                         ▼                │
-│                                           Multimodal Candidate Retrieval │
-│                                                         ↓                │
-│                                      Mood + Preference-aware Re-ranking │
-│                                                         ↓                │
-│                                           Top-K Recommendations         │
-│                                                         ↓                │
-│                                             User Feedback               │
-│                                                         ↓                │
-│                                              Personalization            │
-└─────────────────────────────────────────────────────────────────────────┘
-
-Optional Generation:
-Image Context → Gemini Lyrics → Background Job → Suno.ai → Generated Audio
-```
-
+<div align="center">
+  <img src="static/uploads/Architecture.png" width="600" alt="Image Song Recommender Interface">
+</div>
 ---
 
 ## 🛠️ Technology Stack
