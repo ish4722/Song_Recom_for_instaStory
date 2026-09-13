@@ -9,3 +9,7 @@ static/audio/*
 static/uploads/*
 *.log
 .DS_Store
+song_data_multimodal.pkl
+song_text_faiss.index
+song_clip_faiss.index
+data/feedback.json
